@@ -1,16 +1,153 @@
-# Qwen3.8-Flash-Next FP8
+# Qwen3.8-Flash-Next-FP8 on 8 x RTX PRO 6000D
 
-此目录目前是 FP8 部署占位目录，`compose.yaml` 和 `config.yaml` 均为空，暂时
-不能直接启动服务。
+面向单机 8 张 RTX PRO 6000D（每卡 84 GB）和 1 TB CPU 内存的保守生产基线。
+模型是 Qwen4 架构预览版本，仍有上游问题在持续修复，因此“配置可解析”不等于
+“已经完成生产验收”；上线前必须执行本文的验证和灰度流程。
 
-当前 `.env` 和 `.env.example` 不需要配置任何变量。后续补充部署配置时，应当：
+## 已验证依据与配置选择
 
-1. 在 `config.yaml` 中添加模型与推理参数。
-2. 在 `compose.yaml` 中添加 vLLM 服务、GPU、挂载和健康检查配置。
-3. 将 API Key、宿主机路径和机器相关参数放入本目录 `.env`。
-4. 在 `.env.example` 中提供不含真实敏感值的同名变量。
-5. 使用以下命令验证 Compose 配置：
+- 使用官方要求的专用镜像 `vllm/vllm-openai:qwen38-flash-next`，并固定到已在
+  RTX PRO 6000 Blackwell（SM120）案例中报告的镜像 digest。
+- 官方 FP8 检查点约 172.78 GiB；8 卡总显存约 672 GB，容量充足。
+- 8 卡 FP8 必须使用 TEP8，即 TP=8 加 Expert Parallel；普通 TP8 与 128-wide
+  FP8 量化块不兼容。
+- 使用官方推荐的 Triton MoE 后端、0.85 GPU 内存利用率和原生 262144 上下文。
+- KV Cache 保持 BF16/auto。QSA 的 FP8 KV 支持仍是开放 RFC，不作为生产默认。
+- 不启用 MTP。先建立正确性和稳定性基线，压测通过后再单独评估 MTP3。
+- 不启用 PLE CPU Offload。显存足够时把 51B N-gram Embedding 留在 GPU，避免
+  PCIe 预取引入额外延迟和故障面；1 TB 内存用于模型加载和文件页缓存。
+- 将并发限制为 32、批 Token 限制为 8192，降低混合长短请求触发 PLE Prefill
+  瞬时显存膨胀的风险。
+- RTX PRO 6000D 为 PCIe 拓扑且无 NVLink，因此关闭自定义 all-reduce。
+
+## 前置条件
+
+- Linux x86_64
+- Docker、Docker Compose 和 NVIDIA Container Toolkit
+- 支持 CUDA 13 的 NVIDIA Driver
+- 8 张 RTX PRO 6000D 均为空闲且状态正常
+- 本地模型目录包含完整的 `Qwen3.8-Flash-Next-FP8`
+- API 端口未被占用
+
+先检查硬件和拓扑：
 
 ```sh
-docker compose --env-file .env config --quiet
+nvidia-smi
+nvidia-smi topo -m
 ```
+
+## 配置环境变量
+
+```sh
+cp .env.example .env
+```
+
+编辑 `.env`：
+
+- `VLLM_IMAGE`：已固定 digest 的官方专用镜像
+- `VLLM_API_KEY`：API Bearer Token
+- `PORT`：API 监听端口，默认 `10669`
+- `MODEL_PATH`：宿主机模型目录
+- `CONFIG_PATH`：宿主机上本目录 `config.yaml` 的绝对路径
+- `VLLM_CACHE_PATH`：持久化 AOT/编译缓存目录
+
+创建缓存目录并确保 Docker 可写：
+
+```sh
+mkdir -p "$(sed -n 's/^VLLM_CACHE_PATH=//p' .env)"
+```
+
+`.env` 包含敏感信息，不要提交到版本库。
+
+## 启动
+
+```sh
+docker compose config --quiet
+docker compose pull
+docker compose up -d
+docker compose logs -f model-service
+```
+
+首次启动会加载约 173 GiB 权重并执行 AOT/CUDA 编译，健康检查预留了 30 分钟。
+编译缓存通过 `VLLM_CACHE_PATH` 持久化。
+
+### 首次编译后的受控重启
+
+当前专用镜像有案例显示，冷 AOT 编译峰值可能被计入 KV Cache 预算。首次启动
+完全就绪且缓存落盘后，建议在维护窗口执行一次受控重启，再记录最终 KV Cache
+容量：
+
+```sh
+docker compose restart model-service
+docker compose logs -f model-service
+```
+
+不要在服务仍在编译或加载权重时重启。
+
+## 上线前验证
+
+### 1. 基础健康检查
+
+```sh
+docker compose ps
+curl http://localhost:10669/health
+curl http://localhost:10669/v1/models \
+  -H "Authorization: Bearer <VLLM_API_KEY>"
+```
+
+API 模型名应为 `Qwen/Qwen3.8-Flash-Next-FP8`。
+
+### 2. 正确性 Smoke Test
+
+发送以下问题并人工确认回答同时解释 GDN 的压缩历史能力和 QSA 的稀疏检索：
+
+> Explain how Gated DeltaNet and Qwen Sparse Attention complement each other.
+
+同时验证：
+
+- thinking 和 non-thinking 请求
+- 带工具调用的请求
+- 图片输入
+- 8K、32K、128K 和 262K 分档长上下文
+- Prefix Cache 命中与未命中结果一致
+
+### 3. 混合长度压力测试
+
+必须覆盖“一个超长新请求 + 多个短续写请求”的流量形态。逐步从 4、8、16
+提升到 32 并发，持续观察：
+
+- CUDA OOM、worker 重启和 NCCL 错误
+- 首 Token 延迟、解码吞吐和尾延迟
+- GPU 显存余量与 KV Cache 使用率
+- 工具调用结构化结果和长上下文正确性
+
+如果出现 PLE Prefill OOM，依次将 `max-num-batched-tokens` 降至 4096、将
+`max-num-seqs` 降至 16，再将 `gpu-memory-utilization` 降至 0.80。
+
+## 暂不启用的优化
+
+- `kv-cache-dtype: fp8`：QSA FP8 KV 路径尚未成为稳定默认。
+- `speculative-config` MTP3：官方支持，但应在基线验收后独立测试接受率和稳定性。
+- `VLLM_PLE_CPU_OFFLOAD=1`：当前显存充足，没有必要增加 PCIe 依赖。
+- 1M YaRN：先验证原生 262K；静态 YaRN 可能影响短上下文质量。
+- LMCache/KV Offload：新混合架构应先完成单机原生 Cache 正确性验证。
+
+## 灰度发布
+
+生产切流建议按 1% → 10% → 50% → 100% 逐级进行，每一级至少覆盖一次峰值
+时段。出现结果异常、OOM 或 worker 重启时立即回退，不应依赖 watchdog 掩盖
+持续性崩溃。
+
+## 停止
+
+```sh
+docker compose down
+```
+
+## 参考资料
+
+- [Qwen 官方模型卡](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8)
+- [vLLM 官方 Recipe](https://recipes.vllm.ai/Qwen/Qwen3.8-Flash-Next)
+- [SM120 冷 AOT 容量问题](https://github.com/vllm-project/vllm/issues/54122)
+- [混合长度 PLE Prefill OOM](https://github.com/vllm-project/vllm/issues/54764)
+- [QSA FP8 KV RFC](https://github.com/vllm-project/vllm/issues/54426)

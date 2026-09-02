@@ -1,0 +1,59 @@
+services:
+  model-service:
+    image: ${VLLM_IMAGE:?Set VLLM_IMAGE in .env}
+    container_name: vllm-qwen3.8-flash-next-fp8
+    runtime: nvidia
+    restart: unless-stopped
+
+    environment:
+      - VLLM_API_KEY=${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - PYTORCH_ALLOC_CONF=expandable_segments:True
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+      - CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+
+    volumes:
+      - ${MODEL_PATH:?Set MODEL_PATH in .env}:/model:ro
+      - ${CONFIG_PATH:?Set CONFIG_PATH in .env}:/root/config.yaml:ro
+      - ${VLLM_CACHE_PATH:?Set VLLM_CACHE_PATH in .env}:/root/.cache/vllm
+
+    network_mode: host
+    ipc: host
+    gpus: all
+
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+    cap_add:
+      - IPC_LOCK
+
+    command:
+      - --config
+      - /root/config.yaml
+      - --port
+      - ${PORT:?Set PORT in .env}
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${PORT:?Set PORT in .env}/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 100m
+        max-file: "10"
+
+  watchdog:
+    image: willfarrell/autoheal:1.2.0
+    container_name: qwen3.8-flash-next-fp8-watchdog
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
