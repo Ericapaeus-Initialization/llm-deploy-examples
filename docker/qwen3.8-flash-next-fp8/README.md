@@ -11,13 +11,13 @@
 - 官方 FP8 检查点约 172.78 GiB；8 卡总显存约 672 GB，容量充足。
 - 8 卡 FP8 必须使用 TEP8，即 TP=8 加 Expert Parallel；普通 TP8 与 128-wide
   FP8 量化块不兼容。
-- 使用官方推荐的 Triton MoE 后端、0.85 GPU 内存利用率和原生 262144 上下文。
+- 使用官方推荐的 Triton MoE 后端，并将 GPU 内存利用率设置为 0.93。
 - KV Cache 保持 BF16/auto。QSA 的 FP8 KV 支持仍是开放 RFC，不作为生产默认。
-- 不启用 MTP。先建立正确性和稳定性基线，压测通过后再单独评估 MTP3。
-- 不启用 PLE CPU Offload。显存足够时把 51B N-gram Embedding 留在 GPU，避免
-  PCIe 预取引入额外延迟和故障面；1 TB 内存用于模型加载和文件页缓存。
-- 将并发限制为 32、批 Token 限制为 8192，降低混合长短请求触发 PLE Prefill
-  瞬时显存膨胀的风险。
+- 使用 YaRN 将上下文扩展到 400000，并将默认 reasoning effort 设置为 low。
+- 启用 MTP2；上线前必须单独验证接受率、结果正确性和高并发稳定性。
+- 启用 PLE CPU Offload，将 51B N-gram Embedding 放入 1 TB 主机内存。
+- 并发上限为 64、批 Token 上限为 16384；混合长短请求场景必须重点压测 PLE
+  Prefill 的瞬时显存占用。
 - RTX PRO 6000D 为 PCIe 拓扑且无 NVLink，因此关闭自定义 all-reduce。
 
 ## 前置条件
@@ -58,6 +58,11 @@ mkdir -p "$(sed -n 's/^VLLM_CACHE_PATH=//p' .env)"
 ```
 
 `.env` 包含敏感信息，不要提交到版本库。
+
+PLE Offload worker 通过 PyTorch CUDA IPC 交换张量，需要执行 `pidfd_getfd`。
+为先跑通新模型，Compose 当前启用了 `privileged: true`，同时绕过 capability
+和默认 seccomp 对该系统调用的限制。完成稳定性验证后，应回收权限并测试能否仅
+保留 `SYS_PTRACE` capability。
 
 ## 启动
 
@@ -108,28 +113,28 @@ API 模型名应为 `Qwen/Qwen3.8-Flash-Next-FP8`。
 - thinking 和 non-thinking 请求
 - 带工具调用的请求
 - 图片输入
-- 8K、32K、128K 和 262K 分档长上下文
+- 8K、32K、128K、262K 和 400K 分档长上下文
 - Prefix Cache 命中与未命中结果一致
 
 ### 3. 混合长度压力测试
 
-必须覆盖“一个超长新请求 + 多个短续写请求”的流量形态。逐步从 4、8、16
-提升到 32 并发，持续观察：
+必须覆盖“一个超长新请求 + 多个短续写请求”的流量形态。逐步从 4、8、16、32
+提升到 64 并发，持续观察：
 
 - CUDA OOM、worker 重启和 NCCL 错误
 - 首 Token 延迟、解码吞吐和尾延迟
 - GPU 显存余量与 KV Cache 使用率
 - 工具调用结构化结果和长上下文正确性
 
-如果出现 PLE Prefill OOM，依次将 `max-num-batched-tokens` 降至 4096、将
-`max-num-seqs` 降至 16，再将 `gpu-memory-utilization` 降至 0.80。
+如果出现 PLE Prefill OOM，依次将 `max-num-batched-tokens` 从 16384 降至 8192、
+将 `max-num-seqs` 从 64 降至 32、将 `gpu-memory-utilization` 从 0.93 降至
+0.85；仍不稳定时关闭 MTP，并回退到原生 262144 上下文。
 
 ## 暂不启用的优化
 
 - `kv-cache-dtype: fp8`：QSA FP8 KV 路径尚未成为稳定默认。
-- `speculative-config` MTP3：官方支持，但应在基线验收后独立测试接受率和稳定性。
-- `VLLM_PLE_CPU_OFFLOAD=1`：当前显存充足，没有必要增加 PCIe 依赖。
-- 1M YaRN：先验证原生 262K；静态 YaRN 可能影响短上下文质量。
+- MTP3：当前只启用 MTP2，增加 draft token 前应独立测试接受率和稳定性。
+- 1M YaRN：当前只扩展至 400K；静态 YaRN 可能影响短上下文质量。
 - LMCache/KV Offload：新混合架构应先完成单机原生 Cache 正确性验证。
 
 ## 灰度发布
@@ -151,3 +156,4 @@ docker compose down
 - [SM120 冷 AOT 容量问题](https://github.com/vllm-project/vllm/issues/54122)
 - [混合长度 PLE Prefill OOM](https://github.com/vllm-project/vllm/issues/54764)
 - [QSA FP8 KV RFC](https://github.com/vllm-project/vllm/issues/54426)
+- [PLE Offload Docker CUDA IPC 权限案例](https://github.com/jschmied/qwen38-flash-next-gb10)
