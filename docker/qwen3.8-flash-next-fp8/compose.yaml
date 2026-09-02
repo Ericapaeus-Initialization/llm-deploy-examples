@@ -51,8 +51,8 @@ services:
         max-file: "10"
 
   watchdog:
-    image: willfarrell/autoheal:1.2.0
-    container_name: qwen3.8-flash-next-fp8-watchdog
+    image: willfarrell/autoheal:latest
+    container_name: vllm-watchdog
     environment:
       - AUTOHEAL_CONTAINER_LABEL=all
     volumes:
