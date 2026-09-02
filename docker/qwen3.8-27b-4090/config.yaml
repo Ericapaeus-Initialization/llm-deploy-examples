@@ -1,0 +1,19 @@
+model: "/root/.cache/huggingface/Qwen3.8-27B"
+served-model-name: "Qwen/Qwen-AgentWorld-35B-A3B"
+host: "0.0.0.0"
+max-num-seqs: 50
+tensor-parallel-size: 8
+max-num-batched-tokens: 400
+max-model-len: 196608
+gpu-memory-utilization: 0.93
+disable-custom-all-reduce: true
+enable-auto-tool-choice: true
+tool-call-parser: qwen3_coder
+reasoning-parser: qwen3
+enable-prefix-caching: true
+mm-encoder-tp-mode: data
+mm-processor-cache-type: shm
+trust-remote-code: true
+hf-overrides: '{"text_config": {"rope_parameters": {"mrope_interleaved": true, "mrope_section": [11, 11, 10], "rope_type": "yarn", "rope_theta": 10000000, "partial_rotary_factor": 0.25, "factor": 1.0, "original_max_position_embeddings": 262144}}}'
+enable-flashinfer-autotune: false
+default-chat-template-kwargs: '{"reasoning_effort": "medium"}'

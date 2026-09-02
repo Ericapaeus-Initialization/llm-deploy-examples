@@ -1,0 +1,92 @@
+services:
+  model-service:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-qwen-3.8-27b
+    runtime: nvidia
+    environment:
+      - VLLM_API_KEY=${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
+      - PYTORCH_ALLOC_CONF=expandable_segments:True
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+      - CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - VLLM_PLE_CPU_OFFLOAD=1
+      - VLLM_USE_FLASHINFER_MOE_FP8=0
+      - VLLM_USE_DEEP_GEMM=1
+    volumes:
+      - ${MODEL_CACHE_PATH:?Set MODEL_CACHE_PATH in .env}:/root/.cache/huggingface
+      - ${CONFIG_PATH:?Set CONFIG_PATH in .env}:/root/config.yaml:ro
+
+    privileged: true
+    network_mode: host
+    ipc: host
+    gpus: all
+    pid: host
+
+    depends_on:
+      - lmcache-server
+    command:
+      - --config
+      - /root/config.yaml
+      - --port
+      - ${PORT:?Set PORT in .env}
+      - --kv-transfer-config
+      - >-
+        {"kv_connector":"LMCacheMPConnector","kv_connector_module_path":"lmcache.integration.vllm.lmcache_mp_connector","kv_role":"kv_both","kv_load_failure_policy":"recompute","kv_connector_extra_config":{"lmcache.mp.host":"tcp://127.0.0.1","lmcache.mp.port":${LMCACHE_MP_PORT:?Set LMCACHE_MP_PORT in .env},"lmcache.mp.mq_timeout":300,"lmcache.mp.mp_transfer_mode":"lmcache_driven"}}
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${PORT:?Set PORT in .env}/health || exit 1"]
+      interval: 600s
+      timeout: 5s
+      retries: 5
+      start_period: 1200s
+
+  lmcache-server:
+#   $ docker compose exec model-service \
+#     python3 -c 'from importlib.metadata import version; print(version("lmcache"))'
+#   > 0.5.3
+    image: lmcache/standalone:v0.5.3-cu130
+    container_name: lmcache-server
+    restart: unless-stopped
+
+    privileged: true
+    network_mode: host
+    ipc: host
+    gpus: all
+    pid: host
+
+    volumes:
+      - ${LMCACHE_START_SCRIPT_PATH:?Set LMCACHE_START_SCRIPT_PATH in .env}:/root/start-lmcache.sh:ro
+
+    environment:
+      - LMCACHE_MP_PORT=${LMCACHE_MP_PORT:?Set LMCACHE_MP_PORT in .env}
+      - LMCACHE_HTTP_PORT=${LMCACHE_HTTP_PORT:?Set LMCACHE_HTTP_PORT in .env}
+
+    entrypoint:
+      - /bin/sh
+      - /root/start-lmcache.sh
+
+    command: []
+    healthcheck:
+      test:
+        - CMD
+        - /opt/venv/bin/lmcache
+        - ping
+        - kvcache
+        - --url
+        - http://127.0.0.1:${LMCACHE_HTTP_PORT:?Set LMCACHE_HTTP_PORT in .env}
+        - --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  watchdog:
+    image: willfarrell/autoheal:latest
+    container_name: vllm-watchdog
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always

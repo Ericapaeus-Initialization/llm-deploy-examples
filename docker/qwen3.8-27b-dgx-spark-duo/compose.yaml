@@ -1,0 +1,124 @@
+services:
+  vllm-qwen3.8-27b:
+    image: vllm-openai-rdma:latest
+    container_name: qwen3.8-27b
+    restart: always
+    ipc: host
+    network_mode: host
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    devices:
+      - /dev/infiniband:/dev/infiniband
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ${MODEL_PATH:?Set MODEL_PATH in .env}:/model:ro
+      - ${HF_CACHE_PATH:?Set HF_CACHE_PATH in .env}:/root/.cache/huggingface
+    environment:
+      - VLLM_API_KEY=${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - PYTHONUNBUFFERED=1
+      # slaver 需改成本机IP
+      - VLLM_HOST_IP=${HOST_IP:?Set HOST_IP in .env}
+      - NCCL_SOCKET_IFNAME=${SOCKET_IFNAME:?Set SOCKET_IFNAME in .env}
+      - GLOO_SOCKET_IFNAME=${SOCKET_IFNAME:?Set SOCKET_IFNAME in .env}
+      - NCCL_IB_HCA=${NCCL_IB_HCA:?Set NCCL_IB_HCA in .env}
+      - NCCL_DEBUG=INFO
+      - NCCL_IB_DISABLE=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - /model
+      - --served-model-name
+      - "Qwen3.8-27B"
+      - --host
+      - "0.0.0.0"
+      - --port
+      - ${PORT:?Set PORT in .env}
+      - --trust-remote-code
+      - --tensor-parallel-size
+      - "2"
+      - --nnodes
+      - "2"
+      - --node-rank
+      # slaver 需要改为其它
+      - "0"
+      - --master-addr
+      - ${MASTER_ADDR:?Set MASTER_ADDR in .env}
+      - --master-port
+      - ${MASTER_PORT:?Set MASTER_PORT in .env}
+      # slaver 需要
+      # - --headless
+      - --max-model-len
+      - "131072"
+      - --max-num-batched-tokens
+      - "32768"
+      - --max-num-seqs
+      - "10"
+      - --gpu-memory-utilization
+      - "0.72"
+      - --enable-auto-tool-choice
+      - --enable-prefix-caching
+      - --language-model-only
+      - --disable-custom-all-reduce
+      - --tool-call-parser
+      - qwen3_coder
+      - --reasoning-parser
+      - qwen3
+      - --mm-encoder-tp-mode
+      - data
+      - --mm-processor-cache-type
+      - shm
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:?Set PORT in .env}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 800s
+    # Slaver 上没有 http server 用它
+    # healthcheck:
+    #   test: ["CMD-SHELL", "pgrep -f 'vllm serve' > /dev/null || exit 1"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 10
+    #   start_period: 900s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+  watchdog:
+    image: willfarrell/autoheal:latest
+    container_name: vllm-watchdog
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
+
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04
+    container_name: dcgm-exporter
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - SYS_ADMIN # required for some DCGM fields (e.g. NVLink error counters)
+    environment:
+      # Uncomment to restrict to specific GPUs instead of all of them.
+      # - NVIDIA_VISIBLE_DEVICES=0,1
+      DCGM_EXPORTER_LISTEN: ":${DCGM_EXPORTER_PORT:?Set DCGM_EXPORTER_PORT in .env}"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

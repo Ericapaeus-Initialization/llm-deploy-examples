@@ -1,0 +1,24 @@
+model: "/root/.cache/huggingface/Qwen3.8-27B-FP8"
+served-model-name: "Qwen/Qwen3.8-27B-FP8"
+host: "0.0.0.0"
+
+tensor-parallel-size: 8
+max-model-len: 262144
+max-num-seqs: 64
+max-num-batched-tokens: 8192
+gpu-memory-utilization: 0.93
+kv-cache-dtype: fp8
+
+trust-remote-code: true
+disable-custom-all-reduce: true
+enable-chunked-prefill: true
+enable-prefix-caching: true
+
+enable-auto-tool-choice: true
+tool-call-parser: qwen3_coder
+reasoning-parser: qwen3
+
+mm-encoder-tp-mode: data
+mm-processor-cache-type: shm
+
+speculative-config: '{"method":"mtp","num_speculative_tokens":3}'

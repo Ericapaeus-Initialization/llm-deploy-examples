@@ -1,0 +1,101 @@
+services:
+  vllm:
+    # 官方明确要求用这个专用镜像，或自行装nightly wheel
+    image: vllm/vllm-openai:stepfun37
+    container_name: vllm-step-3.7
+    runtime: nvidia
+    network_mode: host
+
+    # GPU配置 - 使用8个Pro 6000D (84GB × 8 = 672GB)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0", "1", "2", "3", "4", "5", "6", "7"]
+              capabilities: [gpu]
+
+    environment:
+      - VLLM_API_KEY=${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
+      - VLLM_LOGGING_LEVEL=info
+      - CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+
+    volumes:
+      - ${MODEL_PATH:?Set MODEL_PATH in .env}:/models/Step-3.7-Flash:ro
+      - vllm_cache:/root/.cache/huggingface
+
+    entrypoint: ["vllm"]
+
+    # 启动命令 - 对齐 vLLM官方 recipes.vllm.ai/stepfun-ai/Step-3.7-Flash 的NVFP4配置
+    command:
+      - serve
+      - /models/Step-3.7-Flash
+      - --served-model-name
+      - step3.7-flash
+      - --host
+      - 0.0.0.0
+      - --port
+      - ${PORT:?Set PORT in .env}
+      # 自定义架构模型，必须开启
+      - --trust-remote-code
+      - --tensor-parallel-size
+      - "8"
+      - --max-num-seqs
+      - "80"
+      - --max-num-batched-tokens
+      - "32K"
+      - --enable-chunked-prefill
+      - --performance-mode
+      - "throughput"
+      - --enable-prefix-caching
+      - --enable-expert-parallel
+      # hybrid SWA/Global attention架构，必须关闭cascade attention
+      - --disable-cascade-attn
+      # 上下文长度 - 模型原生支持256K(262144)
+      - --max-model-len
+      - "262144"
+      # 内存与调度优化
+      - --gpu-memory-utilization
+      - "0.93"
+      - --async-scheduling
+      - --reasoning-parser
+      - step3p5
+      - --tool-call-parser
+      - step3p5
+      - --enable-auto-tool-choice
+      - --speculative_config
+      - '{"method": "mtp", "num_speculative_tokens": 3}'
+
+    ipc: host
+
+    restart: unless-stopped
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'curl -fsS -H "Authorization: Bearer $${VLLM_API_KEY}" http://localhost:${PORT:?Set PORT in .env}/v1/models'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # 200K上下文+201B参数模型，加载和KV cache profiling需要更久
+      start_period: 1000s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  watchdog:
+    image: willfarrell/autoheal:latest
+    container_name: vllm-watchdog
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
+
+
+volumes:
+  vllm_cache:
+    driver: local

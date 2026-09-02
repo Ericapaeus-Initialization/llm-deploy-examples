@@ -1,0 +1,51 @@
+services:
+  model-service:
+    image: vllm/vllm-openai:qwen38-flash-next
+    container_name: vllm-qwen3.8-flash-next
+    runtime: nvidia
+    environment:
+      - VLLM_API_KEY=${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
+      - PYTORCH_ALLOC_CONF=expandable_segments:True
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+      - CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+
+    volumes:
+      - ${MODEL_CACHE_PATH:?Set MODEL_CACHE_PATH in .env}:/root/.cache/huggingface
+      - ${CONFIG_PATH:?Set CONFIG_PATH in .env}:/root/config.yaml:ro
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    cap_add:
+      - IPC_LOCK
+
+    privileged: true
+    network_mode: host
+    ipc: host
+    gpus: all
+    pid: host
+
+    command:
+      - --config
+      - /root/config.yaml
+      - --port
+      - ${PORT:?Set PORT in .env}
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${PORT:?Set PORT in .env}/health || exit 1"]
+      interval: 600s
+      timeout: 5s
+      retries: 5
+      start_period: 1800s
+
+  watchdog:
+    image: willfarrell/autoheal:latest
+    container_name: vllm-watchdog
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always

@@ -1,0 +1,43 @@
+services:
+  model-service:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-qwen3.8-27b-fp8
+    runtime: nvidia
+    restart: unless-stopped
+
+    environment:
+      - VLLM_API_KEY=${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
+      - PYTORCH_ALLOC_CONF=expandable_segments:True
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+      - CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+
+    volumes:
+      - ${MODEL_CACHE_PATH:?Set MODEL_CACHE_PATH in .env}:/root/.cache/huggingface
+      - ${CONFIG_PATH:?Set CONFIG_PATH in .env}:/root/config.yaml:ro
+
+    network_mode: host
+    ipc: host
+    gpus: all
+
+    command:
+      - --config
+      - /root/config.yaml
+      - --port
+      - ${PORT:?Set PORT in .env}
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${PORT:?Set PORT in .env}/health || exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 5
+      start_period: 900s
+
+  watchdog:
+    image: willfarrell/autoheal:latest
+    container_name: qwen3.8-27b-fp8-watchdog
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always

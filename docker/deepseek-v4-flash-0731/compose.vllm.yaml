@@ -1,0 +1,98 @@
+# 重要前提说明（部署前务必读）：
+#   1. vLLM 官方 recipes 页面(recipes.vllm.ai)原话："Only TP1 at 4K context is verified;
+#      TP2+ did not validate successfully"——纯 --tensor-parallel-size 8 目前没有任何官方/社区验证过，
+#      GitHub 上已有人在 TP8 上跑这个模型直接在 flashmla 稀疏 decode kernel 断言失败(issue #50660)。
+#   2. 本文件采用 --tensor-parallel-size 4 --data-parallel-size 2 --enable-expert-parallel，
+#      是从"有人在 4×RTX Pro 6000 上跑通"的真实配置等比扩展到 8 卡而来，仍然是未经他人验证过的组合，
+#      不是官方 verified 命令，先小流量压测。
+#   3. DSpark 投机解码（--speculative-config ...dspark...）在 vLLM 上目前有已知 bug，
+#      社区原话"will not work until 1-2 PRs are committed"，所以本文件先不开投机解码。
+#   4. --moe-backend 用的是 marlin，不是官方 GB300 命令里的 deep_gemm_mega_moe——
+#      后者是数据中心 Blackwell 专属，marlin 是实测能在工作站 Blackwell(RTX Pro 6000)上跑起来的选择。
+services:
+  vllm-deepseek-v4-flash:
+    image: vllm/vllm-openai:latest
+    container_name: deepseek-v4-flash-0731
+    restart: always
+    ipc: host
+    network_mode: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    volumes:
+      - ${MODEL_PATH:?Set MODEL_PATH in .env}:/model:ro
+      - ${HF_CACHE_PATH:?Set HF_CACHE_PATH in .env}:/root/.cache/huggingface
+    environment:
+      - CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+      - VLLM_API_KEY=${API_KEY:?Set API_KEY in .env}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn   # 社区验证过：这个模型在多进程worker下必须spawn，不能用默认的fork
+      - PYTHONUNBUFFERED=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0", "1", "2", "3", "4", "5", "6", "7"]
+              capabilities: [gpu]
+    command:
+      - --model
+      - /model
+      - --served-model-name
+      - deepseek-v4-flash-0731
+      - --host
+      - "0.0.0.0"
+      - --port
+      - ${PORT:?Set PORT in .env}
+      - --trust-remote-code
+      - --tokenizer-mode
+      - deepseek_v4                # 必需：DeepSeek-V4的DSML格式tool-call/思考块需要专属tokenizer模式
+      - --tensor-parallel-size
+      - "4"
+      - --data-parallel-size
+      - "2"
+      - --block-size
+      - "256"
+      - --enable-expert-parallel
+      - --disable-custom-all-reduce  # 社区实测在RTX Pro 6000(无NVLink)上需要关掉，避免all-reduce kernel问题
+      - --kv-cache-dtype
+      - fp8
+      - --moe-backend
+      - marlin
+      - --max-model-len
+      - "400000"
+      - --max-num-batched-tokens
+      - "2048"
+      - --max-num-seqs
+      - "60"
+      - --gpu-memory-utilization
+      - "0.93"
+      - --attention-config
+      - '{"use_fp4_indexer_cache": false}' # RuntimeError: Worker failed with error 'use_fp4_indexer_cache requires Blackwell datacenter GPUs (sm_10x, e.g. B200/GB200); sm_120 (consumer Blackwell) and earlier architectures are not supported.', please check the stack trace above for the root cause
+      # - --speculative-config
+      # - '{"method":"dspark","num_speculative_tokens":5,"draft_sample_method":"greedy"}'
+      - --enable-chunked-prefill
+      - --enable-prefix-caching
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - deepseek_v4
+      - --reasoning-parser
+      - deepseek_v4
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:?Set PORT in .env}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+  watchdog:
+    image: willfarrell/autoheal:latest
+    container_name: vllm-watchdog
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always

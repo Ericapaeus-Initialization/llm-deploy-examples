@@ -1,0 +1,36 @@
+services:
+  model-service:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-qwen3.6
+    runtime: nvidia
+    environment:
+      - VLLM_API_KEY=${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
+      - PYTORCH_ALLOC_CONF=expandable_segments:True
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+      - CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+    volumes:
+      - ${MODEL_CACHE_PATH:?Set MODEL_CACHE_PATH in .env}:/root/.cache/huggingface
+      - ${CONFIG_PATH:?Set CONFIG_PATH in .env}:/root/config.yaml:ro
+    network_mode: host
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --config
+      - /root/config.yaml
+      - --port
+      - ${PORT:?Set PORT in .env}
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${PORT:?Set PORT in .env}/health || exit 1"]
+      interval: 600s        # 每 600 秒检查一次
+      timeout: 5s          # 超时 5 秒
+      retries: 5           # 连续失败 5 次才判定 unhealthy
+      start_period: 300s   # 给模型加载 5 分钟冷启动时间

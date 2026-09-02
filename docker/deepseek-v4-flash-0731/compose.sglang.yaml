@@ -1,0 +1,103 @@
+services:
+
+  sglang-deepseek-v4-flash:
+    image: lmsysorg/sglang:latest
+    container_name: deepseek-v4-flash-0731
+    restart: always
+    ipc: host
+    network_mode: host
+
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    volumes:
+      - ${MODEL_PATH:?Set MODEL_PATH in .env}:/model:ro
+      - ${HF_CACHE_PATH:?Set HF_CACHE_PATH in .env}:/root/.cache/huggingface
+    environment:
+      - CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+      - SGLANG_API_KEY=${API_KEY:?Set API_KEY in .env}
+      - PYTHONUNBUFFERED=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0", "1", "2", "3", "4", "5", "6", "7"]
+              capabilities: [gpu]
+    command:
+      - python3
+      - -m
+      - sglang.launch_server
+      - --model-path
+      - /model
+      - --trust-remote-code
+      - --host
+      - "0.0.0.0"
+      - --port
+      - ${PORT:?Set PORT in .env}
+      - --api-key
+      - ${API_KEY:?Set API_KEY in .env}
+      - --tp
+      - "8"                          # 8 卡张量并行，占满整机
+      - --mem-fraction-static
+      - "0.90"                       # 权重 ~40GB/卡后，为 KV cache 预留约90%显存
+      - --context-length
+      - "262144"                     # 256K 起步；显存富余，可视测试情况上调（最高1M）
+      - --chunked-prefill-size
+      - "4096"                       # 官方长上下文场景推荐值，降低单次prefill显存峰值
+      - --kv-cache-dtype
+      - "fp8_e4m3"                   # SGLang官方文档明确给出：Blackwell(B200)上用fp8_e4m3开启fp8 KV cache+fp8 attention kernel，RTX Pro 6000同为Blackwell架构，沿用该值
+      # - --enable-symm-mem           # 官方文档标注的可选性能优化项，Blackwell/Hopper通用，但官方原话是"可能不稳定"，先不默认开，压测稳定后再考虑打开
+      # SGLang 官方 GitHub issue #24633：RTX PRO 6000(SM120)上 MLA prefill 会被错误路由到只支持数据中心 Blackwell(SM100/B200)的 kernel 路径,维护者也确认过"trtllm_mla 不支持 SM120"。
+      # Roadmap issue #19637："SM120 Performance Optimization Plan"里明确列着 DSA(稀疏注意力)在 SM120 上还是进行中的工作项,包括专门的 "SM120 sparse MLA kernels" PR。
+      # 甚至有个第三方仓库(0xSero/deepseek-v4-flash-sm120)专门在做"correctness-first SM120 稀疏 decode patch",README 里写着"如果不用这个 patch,FlashMLA 稀疏 decode 在 SM120 上会 fallback 到上游实现然后失败"——和你现在的报错性质一致。
+      # - --speculative-algorithm
+      # - "DSPARK"                     # 启用模型自带的 DSpark 投机解码模块（无需单独draft权重）
+      - --moe-runner-backend
+      - "flashinfer_mxfp4"
+      - --swa-full-tokens-ratio
+      - "0.1"
+      - --max-running-requests
+      - "64"                         # 开启投机解码后SGLang默认会把并发压到48，这里按单机场景显式调大
+      - --tool-call-parser
+      - "deepseekv4"
+      - --reasoning-parser
+      - "deepseek-v4"
+      - --served-model-name
+      - "deepseek-v4-flash-0731"
+      - --log-level
+      - "info"
+      - --enable-metrics
+      - --enable-mfu-metrics
+      - --collect-tokens-histogram
+      - --extra-metric-labels
+      - ${SGLANG_EXTRA_METRIC_LABELS:?Set SGLANG_EXTRA_METRIC_LABELS in .env}
+
+    runtime: nvidia
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:?Set PORT in .env}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s # 304B权重加载+编译预热耗时较长，给足启动缓冲
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  watchdog:
+    image: willfarrell/autoheal:latest
+    container_name: vllm-watchdog
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
+
+
+volumes:
+  vllm_cache:
+    driver: local

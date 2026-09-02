@@ -1,0 +1,30 @@
+model: "/root/.cache/huggingface/Qwen3.8-Flash-Next"
+served-model-name: "Qwen/Qwen3.8-Flash-Next"
+host: "0.0.0.0"
+max-num-seqs: 100
+tensor-parallel-size: 8
+max-num-batched-tokens: 8192
+max-model-len: 400000
+gpu-memory-utilization: 0.93
+disable-custom-all-reduce: true
+enable-auto-tool-choice: true
+tool-call-parser: qwen3_xml
+reasoning-parser: qwen3
+enable-prefix-caching: true
+prefix-match-unit: 8
+no-enable-flashinfer-autotune: true
+moe-backend: triton
+speculative-config: '{"method":"mtp","num_speculative_tokens":2}'
+hf-overrides: '{"text_config": {"rope_parameters": {"mrope_interleaved": true, "mrope_section": [11, 11, 10], "rope_type": "yarn", "rope_theta": 10000000, "partial_rotary_factor": 0.25, "factor": 1.6, "original_max_position_embeddings": 262144}}}'
+enable-chunked-prefill: true
+enable-expert-parallel: true
+default-chat-template-kwargs: '{"reasoning_effort": "medium"}'
+kv-offloading-backend: native
+# sudo mount -o remount,size=850G /dev/shm
+# sudo find /dev/shm \
+#   -maxdepth 1 \
+#   -type f \
+#   -name 'vllm_offload_*.mmap' \
+#   -delete
+# df -h /dev/shm
+kv-offloading-size: 384

@@ -1,0 +1,16 @@
+model: "/root/.cache/huggingface/Qwen3.6-35B-A3B"
+served-model-name: "Qwen/Qwen-AgentWorld-35B-A3B"
+host: "0.0.0.0"
+max-num-seqs: 40
+tensor-parallel-size: 8
+max-num-batched-tokens: 65536
+max-model-len: 262144
+gpu-memory-utilization: 0.90
+disable-custom-all-reduce: true
+enable-auto-tool-choice: true
+tool-call-parser: qwen3_coder
+reasoning-parser: qwen3
+default-chat-template-kwargs: '{"enable_thinking": false}'
+enable-prefix-caching: true
+mm-encoder-tp-mode: data # 视觉编码器数据并行
+mm-processor-cache-type: shm # 共享内存缓存预处理结果
