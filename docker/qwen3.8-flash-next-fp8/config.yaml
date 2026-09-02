@@ -1,17 +1,17 @@
 model: "/model"
-served-model-name: "Qwen/Qwen3.8-Flash-Next-FP8"
+served-model-name: "Qwen/Qwen3.8-Flash-Next"
 host: "0.0.0.0"
 
 # Official FP8 on eight GPUs requires tensor + expert parallelism (TEP8).
 tensor-parallel-size: 8
 enable-expert-parallel: true
-moe-backend: triton
+moe-backend: batched_triton
 
 # Conservative production baseline for mixed-length agent traffic.
-max-model-len: 262144
-max-num-seqs: 32
-max-num-batched-tokens: 8192
-gpu-memory-utilization: 0.85
+max-model-len: 400000
+max-num-seqs: 64
+max-num-batched-tokens: 16384
+gpu-memory-utilization: 0.93
 kv-cache-dtype: auto
 
 trust-remote-code: true
@@ -26,3 +26,6 @@ reasoning-parser: qwen3
 
 mm-encoder-tp-mode: data
 mm-processor-cache-type: shm
+default-chat-template-kwargs: '{"reasoning_effort": "low"}'
+hf-overrides: '{"text_config": {"rope_parameters": {"mrope_interleaved": true, "mrope_section": [11, 11, 10], "rope_type": "yarn", "rope_theta": 10000000, "partial_rotary_factor": 0.25, "factor": 1.6, "original_max_position_embeddings": 262144}}}'
+speculative-config: '{"method":"mtp","num_speculative_tokens":2}'

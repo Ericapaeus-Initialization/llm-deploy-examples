@@ -8,6 +8,7 @@ services:
     environment:
       - VLLM_API_KEY=${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_PLE_CPU_OFFLOAD=1
       - PYTORCH_ALLOC_CONF=expandable_segments:True
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - NVIDIA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
