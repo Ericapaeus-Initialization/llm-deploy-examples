@@ -17,8 +17,10 @@
 - 启用 MTP2；上线前必须单独验证接受率、结果正确性和高并发稳定性。
 - 不启用 PLE CPU Offload；8 卡显存足以保存 51B N-gram Embedding，避免 PCIe
   预取成为超长 Prompt Prefill 的瓶颈。
-- 运行序列上限保持 64、批 Token 上限保持 16384；每步最多并发 4 个 Partial
-  Prefill，其中最多 1 个长 Prefill，单请求长 Prefill chunk 限制为 8192。
+- 运行序列上限保持 64、批 Token 上限保持 16384，单请求长 Prefill chunk
+  限制为 8192。
+- 当前专用镜像不支持 `max-num-partial-prefills` 和
+  `max-long-partial-prefills`；长 Prefill 并发数量必须由上游网关控制。
 - RTX PRO 6000D 为 PCIe 拓扑且无 NVLink，因此关闭自定义 all-reduce。
 
 ## 前置条件
@@ -116,18 +118,19 @@ API 模型名应为 `Qwen/Qwen3.8-Flash-Next-FP8`。
 ### 3. 混合长度压力测试
 
 必须覆盖“一个超长新请求 + 多个短续写请求”的流量形态。运行序列可以逐步从
-4、8、16、32 提升到 64，但同一步只允许 4 个 Partial Prefill，且最多包含 1 个
-长 Prefill。持续观察：
+4、8、16、32 提升到 64。由于当前专用镜像不能在调度器内部限制 Partial
+Prefill 数量，网关应根据 Token 数量限制同时进入的冷长 Prompt，建议先从 1 个
+开始。持续观察：
 
 - CUDA OOM、worker 重启和 NCCL 错误
 - 首 Token 延迟、解码吞吐和尾延迟
 - GPU 显存余量与 KV Cache 使用率
 - 工具调用结构化结果和长上下文正确性
 
-如果出现 PLE Prefill OOM，先保持 `max-num-seqs=64`，依次将
-`max-num-partial-prefills` 从 4 降至 2、将 `max-num-batched-tokens` 从 16384
-降至 8192，再将 `gpu-memory-utilization` 从 0.93 降至 0.90。仍不稳定时关闭
-MTP，并评估将超长请求路由到独立实例。
+如果出现 PLE Prefill OOM，先保持 `max-num-seqs=64`，将
+`max-num-batched-tokens` 从 16384 降至 8192，使其与
+`long-prefill-token-threshold` 相等；随后再将 `gpu-memory-utilization` 从 0.93
+降至 0.90。仍不稳定时关闭 MTP，并评估将超长请求路由到独立实例。
 
 ## 暂不启用的优化
 
