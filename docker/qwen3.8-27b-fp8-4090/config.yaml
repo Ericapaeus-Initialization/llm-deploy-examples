@@ -1,10 +1,10 @@
 model: "/root/.cache/huggingface/Qwen3.8-27B-FP8"
-served-model-name: "Qwen/Qwen3.8-27B-FP8"
+served-model-name: "Qwen/Qwen3.8-27B"
 host: "0.0.0.0"
 
 tensor-parallel-size: 8
 max-model-len: 262144
-max-num-seqs: 64
+max-num-seqs: 40
 max-num-batched-tokens: 8192
 gpu-memory-utilization: 0.93
 kv-cache-dtype: fp8
@@ -22,3 +22,6 @@ mm-encoder-tp-mode: data
 mm-processor-cache-type: shm
 
 speculative-config: '{"method":"mtp","num_speculative_tokens":3}'
+hf-overrides: '{"text_config": {"rope_parameters": {"mrope_interleaved": true, "mrope_section": [11, 11, 10], "rope_type": "yarn", "rope_theta": 10000000, "partial_rotary_factor": 0.25, "factor": 1.0, "original_max_position_embeddings": 262144}}}'
+default-chat-template-kwargs: '{"reasoning_effort": "low"}'
+enable-flashinfer-autotune: false
