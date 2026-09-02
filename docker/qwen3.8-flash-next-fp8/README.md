@@ -15,9 +15,10 @@
 - KV Cache 保持 BF16/auto。QSA 的 FP8 KV 支持仍是开放 RFC，不作为生产默认。
 - 使用 YaRN 将上下文扩展到 400000，并将默认 reasoning effort 设置为 low。
 - 启用 MTP2；上线前必须单独验证接受率、结果正确性和高并发稳定性。
-- 启用 PLE CPU Offload，将 51B N-gram Embedding 放入 1 TB 主机内存。
-- 并发上限为 64、批 Token 上限为 16384；混合长短请求场景必须重点压测 PLE
-  Prefill 的瞬时显存占用。
+- 不启用 PLE CPU Offload；8 卡显存足以保存 51B N-gram Embedding，避免 PCIe
+  预取成为超长 Prompt Prefill 的瓶颈。
+- 运行序列上限保持 64、批 Token 上限保持 16384；每步最多并发 4 个 Partial
+  Prefill，其中最多 1 个长 Prefill，单请求长 Prefill chunk 限制为 8192。
 - RTX PRO 6000D 为 PCIe 拓扑且无 NVLink，因此关闭自定义 all-reduce。
 
 ## 前置条件
@@ -57,12 +58,8 @@ cp .env.example .env
 mkdir -p "$(sed -n 's/^VLLM_CACHE_PATH=//p' .env)"
 ```
 
-`.env` 包含敏感信息，不要提交到版本库。
-
-PLE Offload worker 通过 PyTorch CUDA IPC 交换张量，需要执行 `pidfd_getfd`。
-为先跑通新模型，Compose 当前启用了 `privileged: true`，同时绕过 capability
-和默认 seccomp 对该系统调用的限制。完成稳定性验证后，应回收权限并测试能否仅
-保留 `SYS_PTRACE` capability。
+`.env` 包含敏感信息，不要提交到版本库。当前未启用 PLE CPU Offload，因此
+模型容器不需要 `privileged` 或 `SYS_PTRACE`。
 
 ## 启动
 
@@ -118,22 +115,25 @@ API 模型名应为 `Qwen/Qwen3.8-Flash-Next-FP8`。
 
 ### 3. 混合长度压力测试
 
-必须覆盖“一个超长新请求 + 多个短续写请求”的流量形态。逐步从 4、8、16、32
-提升到 64 并发，持续观察：
+必须覆盖“一个超长新请求 + 多个短续写请求”的流量形态。运行序列可以逐步从
+4、8、16、32 提升到 64，但同一步只允许 4 个 Partial Prefill，且最多包含 1 个
+长 Prefill。持续观察：
 
 - CUDA OOM、worker 重启和 NCCL 错误
 - 首 Token 延迟、解码吞吐和尾延迟
 - GPU 显存余量与 KV Cache 使用率
 - 工具调用结构化结果和长上下文正确性
 
-如果出现 PLE Prefill OOM，依次将 `max-num-batched-tokens` 从 16384 降至 8192、
-将 `max-num-seqs` 从 64 降至 32、将 `gpu-memory-utilization` 从 0.93 降至
-0.85；仍不稳定时关闭 MTP，并回退到原生 262144 上下文。
+如果出现 PLE Prefill OOM，先保持 `max-num-seqs=64`，依次将
+`max-num-partial-prefills` 从 4 降至 2、将 `max-num-batched-tokens` 从 16384
+降至 8192，再将 `gpu-memory-utilization` 从 0.93 降至 0.90。仍不稳定时关闭
+MTP，并评估将超长请求路由到独立实例。
 
 ## 暂不启用的优化
 
 - `kv-cache-dtype: fp8`：QSA FP8 KV 路径尚未成为稳定默认。
 - MTP3：当前只启用 MTP2，增加 draft token 前应独立测试接受率和稳定性。
+- PLE CPU Offload：当前显存充足，关闭后可避免超长 Prefill 的主机 PCIe 预取。
 - 1M YaRN：当前只扩展至 400K；静态 YaRN 可能影响短上下文质量。
 - LMCache/KV Offload：新混合架构应先完成单机原生 Cache 正确性验证。
 
@@ -156,4 +156,3 @@ docker compose down
 - [SM120 冷 AOT 容量问题](https://github.com/vllm-project/vllm/issues/54122)
 - [混合长度 PLE Prefill OOM](https://github.com/vllm-project/vllm/issues/54764)
 - [QSA FP8 KV RFC](https://github.com/vllm-project/vllm/issues/54426)
-- [PLE Offload Docker CUDA IPC 权限案例](https://github.com/jschmied/qwen38-flash-next-gb10)

@@ -7,10 +7,13 @@ tensor-parallel-size: 8
 enable-expert-parallel: true
 moe-backend: triton
 
-# Conservative production baseline for mixed-length agent traffic.
+# Long-context production profile with bounded concurrent prefills.
 max-model-len: 400000
 max-num-seqs: 64
 max-num-batched-tokens: 16384
+max-num-partial-prefills: 4
+max-long-partial-prefills: 1
+long-prefill-token-threshold: 8192
 gpu-memory-utilization: 0.93
 kv-cache-dtype: auto
 
