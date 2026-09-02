@@ -59,19 +59,20 @@ curl http://localhost:10669/v1/models \
   -H "Authorization: Bearer <VLLM_API_KEY>"
 ```
 
-API 模型名为 `Qwen/Qwen3.8-27B-FP8`。
+加载的权重为 `Qwen3.8-27B-FP8`，API 对外模型名为 `Qwen/Qwen3.8-27B`。
 
 ## 调优与故障排查
 
 如果启动期间显存不足，按以下顺序降低压力：
 
-1. 将 `max-num-seqs` 从 64 降到 32。
+1. 将 `max-num-seqs` 从 40 降到 32。
 2. 将 `max-num-batched-tokens` 从 8192 降到 4096。
 3. 将 `gpu-memory-utilization` 从 0.93 降到 0.90。
 4. 临时移除 `speculative-config`，排除 MTP 图捕获占用。
 
-当前配置不会预留大块 CPU Offload 内存。如果后续确实需要扩展 GPU KV Cache，
-应优先评估 vLLM 原生 KV Offload，并在启用前单独做长上下文正确性和延迟测试。
+当前配置不会预留大块 CPU Offload 内存。该服务器启用 128 GiB native KV
+Offload 时，所有 TP rank 的 `cudaHostRegister` 均失败，并导致后续 warmup 抛出
+异步 `CUDA error: invalid argument`，因此不要在此配置上重新启用。
 
 ## 停止
 
