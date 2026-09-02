@@ -5,7 +5,7 @@ host: "0.0.0.0"
 # Official FP8 on eight GPUs requires tensor + expert parallelism (TEP8).
 tensor-parallel-size: 8
 enable-expert-parallel: true
-moe-backend: batched_triton
+moe-backend: triton
 
 # Conservative production baseline for mixed-length agent traffic.
 max-model-len: 400000
