@@ -1,0 +1,56 @@
+services:
+  vllm-deepseek-v4-flash-vision:
+    # DeepSeek V4 Vision support first shipped in this dedicated pre-release image.
+    # Do not replace it with vllm/vllm-openai:latest without revalidating support.
+    image: vllm/vllm-openai:deepseekv4-flash-vision
+    container_name: deepseek-v4-flash-vision-exp
+    restart: unless-stopped
+    ipc: host
+    network_mode: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    volumes:
+      - ${MODEL_PATH:?Set MODEL_PATH in .env}:/model:ro
+      - ${HF_CACHE_PATH:?Set HF_CACHE_PATH in .env}:/root/.cache/huggingface
+      - ${MEDIA_PATH:?Set MEDIA_PATH in .env}:/media:ro
+      - ${CONFIG_PATH:?Set CONFIG_PATH in .env}:/root/config.yaml:ro
+    environment:
+      CUDA_VISIBLE_DEVICES: 0,1,2,3,4,5,6,7
+      VLLM_API_KEY: ${API_KEY:?Set API_KEY in .env}
+      VLLM_WORKER_MULTIPROC_METHOD: spawn
+      PYTHONUNBUFFERED: "1"
+      # Recommended by the official recipe for this mixed-FP4 checkpoint.
+      VLLM_FLASHINFER_AUTOTUNE_SKIP_OPS: trtllm_fp4_block_scale_moe,flashinfer::trtllm_fp4_block_scale_moe
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0", "1", "2", "3", "4", "5", "6", "7"]
+              capabilities: [gpu]
+    command:
+      - --config
+      - /root/config.yaml
+      - --port
+      - ${PORT:?Set PORT in .env}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:?Set PORT in .env}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1800s
+    logging:
+      driver: json-file
+      options:
+        max-size: 100m
+        max-file: "10"
+
+  watchdog:
+    image: willfarrell/autoheal:latest
+    container_name: deepseek-v4-flash-vision-watchdog
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always

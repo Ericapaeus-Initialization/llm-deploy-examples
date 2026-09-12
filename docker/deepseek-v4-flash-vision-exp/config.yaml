@@ -1,0 +1,32 @@
+model: /model
+served-model-name: deepseek-v4-flash-vision-exp
+host: 0.0.0.0
+
+# 8x RTX PRO 6000 Blackwell: two TP4 replicas with expert parallelism.
+tensor-parallel-size: 4
+data-parallel-size: 2
+enable-expert-parallel: true
+disable-custom-all-reduce: true
+
+kv-cache-dtype: fp8
+block-size: 256
+gpu-memory-utilization: 0.90
+max-model-len: 524288
+max-num-batched-tokens: 8192
+max-num-seqs: 32
+enable-chunked-prefill: true
+enable-prefix-caching: true
+
+# 256 GiB of the machine's 512 GiB host RAM, distributed across all workers.
+kv-transfer-config: '{"kv_connector":"SimpleCPUOffloadConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":274877906944,"lazy_offload":true}}'
+
+limit-mm-per-prompt: '{"image":8,"video":0}'
+allowed-local-media-path: /media
+
+tool-call-parser: deepseek_v4
+enable-auto-tool-choice: true
+reasoning-parser: deepseek_v4
+reasoning-config: '{"reasoning_parser":"deepseek_v4","reasoning_start_str":"","reasoning_end_str":""}'
+
+# The checkpoint contains its own DSpark draft module.
+speculative-config: '{"method":"dspark","model":"/model","num_speculative_tokens":3,"draft_sample_method":"probabilistic","enable_adaptive_verification":true}'
