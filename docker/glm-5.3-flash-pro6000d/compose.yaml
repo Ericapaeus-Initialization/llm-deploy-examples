@@ -1,0 +1,74 @@
+services:
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:glm53-flash}
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      VLLM_API_KEY: ${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
+      SERVER_PORT: ${PORT:-20671}
+      VLLM_USE_RUST_FRONTEND: "0"
+      VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+      CUDA_VISIBLE_DEVICES: 0,1,2,3,4,5,6,7
+      HF_HUB_OFFLINE: "1"
+    volumes:
+      - ${MODEL_PATH:?Set MODEL_PATH in .env}:/model:ro
+      - compile_cache:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0", "1", "2", "3", "4", "5", "6", "7"]
+              capabilities: [gpu]
+    entrypoint: ["vllm"]
+    command:
+      - serve
+      - /model
+      - --served-model-name
+      - glm-5.3-flash
+      - --host
+      - 0.0.0.0
+      - --port
+      - ${PORT:-20671}
+      - --tensor-parallel-size
+      - "8"
+      - --distributed-executor-backend
+      - mp
+      - --kv-cache-dtype
+      - fp8
+      - --max-model-len
+      - ${MAX_MODEL_LEN:-409600}
+      - --max-num-seqs
+      - ${MAX_NUM_SEQS:-50}
+      - --max-num-batched-tokens
+      - ${MAX_NUM_BATCHED_TOKENS:-8192}
+      - --gpu-memory-utilization
+      - ${GPU_MEMORY_UTILIZATION:-0.90}
+      - --enable-chunked-prefill
+      - --tool-call-parser
+      - glm47
+      - --reasoning-parser
+      - glm45
+      - --enable-auto-tool-choice
+      # 可选：MTP5 需另行验证高并发内核；部分 SM120 补丁只验证 seqs=10。
+      # - --speculative-config
+      # - '{"method":"mtp","num_speculative_tokens":5}'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -H \"Authorization: Bearer $$VLLM_API_KEY\" http://127.0.0.1:$$SERVER_PORT/v1/models >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 3600s
+    logging:
+      driver: json-file
+      options:
+        max-size: 100m
+        max-file: "5"
+
+volumes:
+  compile_cache:
