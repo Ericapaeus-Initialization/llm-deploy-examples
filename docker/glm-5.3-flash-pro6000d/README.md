@@ -42,7 +42,10 @@ docker compose logs -f vllm
 ```
 
 初次加载及编译可能需要数十分钟，健康检查预留一小时。
-Docker 的 restart 策略会重启退出的进程，但不会仅因 unhealthy 自动重启。
+Docker 的 restart 策略负责重启退出的进程；watchdog 使用 `willfarrell/autoheal`，
+通过 Docker socket 重启带 `glm53-flash-autoheal=true` 标签且已变为 unhealthy 的容器。
+健康检查使用 `/health`，启动宽限期为一小时，此后连续 10 次检查失败才判为 unhealthy。
+这不是完整生成探针，无法保证发现所有输出退化或推理卡顿。
 host 网络直接监听 `.env` 中的端口。编译缓存保存在 named volume 中。
 
 ## 已有部署迁移
@@ -132,3 +135,6 @@ docker compose down
 对比缓存命中率、TTFT、TPOT、聚合吞吐、MTP 接受率、KV 占用和抢占重算。
 若 MTP 出现内核问题或吞吐下降，删除 `--speculative-config` 及其 JSON 参数；
 若 16K 批次引起显存或延迟问题，将 `.env` 的预算恢复到 8192 后重建容器。
+
+启用新增 watchdog 时执行 `docker compose up -d`，不要仅指定 `vllm` 服务；
+通过 `docker compose logs -f watchdog` 查看自动恢复记录。
