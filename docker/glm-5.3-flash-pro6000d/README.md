@@ -15,7 +15,7 @@
   用户的 2026-09-14 启动日志已复现该错误，因此不再默认使用原始官方镜像。
 - 该社区构建报告验证了 4×96GB PRO 6000；本配置 TP8/400K/50 尚未实测。
   补丁也调整稀疏注意力候选选择，需要验证长文检索正确性。
-  保持 FP8 KV，按案例关闭 FlashInfer autotune；MTP 默认关闭。
+  保持 FP8 KV，按案例关闭 FlashInfer autotune；当前试跑开启 prefix caching 和 MTP5。
 - 宿主机需要 Linux、Docker Compose、NVIDIA Container Toolkit，以及兼容镜像 CUDA 的驱动。
 
 ## 配置及启动
@@ -76,11 +76,12 @@ docker compose logs -f vllm
 | 权重 / KV | 原生 FP8 / FP8 KV，沿用官方 Blackwell 配置方向 |
 | 并行 | TP8、单进程组，使用 GPU 0–7 |
 | 上下文 | 409600（400 × 1024），为本配置目标；不直接申请原生 1M |
-| 调度 | 最多 50 条序列、每轮 8192 token、chunked prefill |
+| 调度 | 最多 50 条序列、每轮 16384 token、chunked prefill |
 | 显存预算 | 0.90，保留运行余量 |
 | 解析 | `glm47` 工具调用、`glm45` reasoning、自动工具选择 |
 | Frontend | Python |
-| 推测解码 | 默认关闭；高并发基线先不启用；MTP5 需确认所选 SM120 内核支持，参见调研记录 |
+| 前缀缓存 | 显式开启 `--enable-prefix-caching` |
+| 推测解码 | MTP5 试跑，50 序列下的性能及正确性需压测 |
 
 400K 是单请求输入加输出的上限，50 条调度序列不代表能同时容纳 50 个满长请求。
 这些是期望配置，尚未实测；已有 `.env` 需手动同步 `MAX_MODEL_LEN=409600` 和 `MAX_NUM_SEQS=50`。
@@ -120,3 +121,14 @@ docker compose down
 
 见 [调研记录](RESEARCH.md)。当前使用针对已复现错误的社区补丁构建，
 配置静态校验不代表八卡启动、400K 请求或 50 条并发已通过验收。
+
+## 2026-09-15 试跑配置
+
+用户已确认此前配置跑通；本轮增加 prefix caching、MTP5，将每轮 token 预算提高到
+16384，保留 TP8、409600 上下文和 50 序列。新组合尚未实测。
+服务器已有 `.env` 需设置 `MAX_NUM_BATCHED_TOKENS=16384`，然后同步 Compose 并执行
+`docker compose up -d --force-recreate vllm`。
+
+对比缓存命中率、TTFT、TPOT、聚合吞吐、MTP 接受率、KV 占用和抢占重算。
+若 MTP 出现内核问题或吞吐下降，删除 `--speculative-config` 及其 JSON 参数；
+若 16K 批次引起显存或延迟问题，将 `.env` 的预算恢复到 8192 后重建容器。

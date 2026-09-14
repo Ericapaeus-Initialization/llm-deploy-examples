@@ -46,9 +46,10 @@ services:
       - --max-num-seqs
       - ${MAX_NUM_SEQS:-50}
       - --max-num-batched-tokens
-      - ${MAX_NUM_BATCHED_TOKENS:-8192}
+      - ${MAX_NUM_BATCHED_TOKENS:-16384}
       - --gpu-memory-utilization
       - ${GPU_MEMORY_UTILIZATION:-0.90}
+      - --enable-prefix-caching
       - --enable-chunked-prefill
       - --no-enable-flashinfer-autotune
       - --tool-call-parser
@@ -56,9 +57,9 @@ services:
       - --reasoning-parser
       - glm45
       - --enable-auto-tool-choice
-      # 可选：MTP5 需另行验证高并发内核；部分 SM120 补丁只验证 seqs=10。
-      # - --speculative-config
-      # - '{"method":"mtp","num_speculative_tokens":5}'
+      # 试跑 MTP5；50 序列下的内核表现和收益需压测。
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":5}'
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -H \"Authorization: Bearer $$VLLM_API_KEY\" http://127.0.0.1:$$SERVER_PORT/v1/models >/dev/null"]
       interval: 30s
