@@ -55,7 +55,9 @@ GPU_MEMORY_UTILIZATION=0.90
 ```
 
 保持 TP8、原生 FP8、FP8 KV、Python frontend，先关闭 MTP。
-配置值已经同步；原有 `.env` 不会被自动覆盖。暂不把任一社区镜像设为已验证默认。
+配置值已经同步。用户日志已复现官方镜像的 NoPE MLA 错误，默认镜像现改为上述
+`cstechdev` 补丁构建，并关闭 FlashInfer autotune；它仍未经过本机八卡验收。
+远端已有 `.env` 需按 README 同步镜像和目标参数。
 
 `max-num-seqs` 是每轮调度序列上限，不承诺请求全部驻留显存。
 [vLLM 参数说明](https://docs.vllm.ai/en/latest/configuration/engine_args/)

@@ -1,6 +1,6 @@
 services:
   vllm:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:glm53-flash}
+    image: ${VLLM_IMAGE:-cstechdev/vllm:glm53-flash-nope-sm120-cu130-20260826-r1}
     restart: unless-stopped
     init: true
     network_mode: host
@@ -50,6 +50,7 @@ services:
       - --gpu-memory-utilization
       - ${GPU_MEMORY_UTILIZATION:-0.90}
       - --enable-chunked-prefill
+      - --no-enable-flashinfer-autotune
       - --tool-call-parser
       - glm47
       - --reasoning-parser

@@ -9,13 +9,13 @@
 - 按本仓库已有 PRO 6000D 配置的每卡 84 GB、八卡约 672 GB 规划；实际容量以 `nvidia-smi` 为准。
 - 使用 `zai-org/GLM-5.3-Flash` 原生 FP8 权重，本地目录须含完整权重、config、tokenizer 和模板文件。
   官方估计权重约 306 GiB；TP8 均摊约 38.3 GiB/卡只是权重粗估，不含复制部分、KV、运行时和 CUDA graphs。
-- 官方指定 `vllm/vllm-openai:glm53-flash`，目前不要用任意旧版或 `latest` 替换。
-  recipe 标注 vLLM 0.29.0+，同时仍要求专用镜像；FlashInfer 排错要求为 0.6.18+。
-- **GB200/B200 的 SM100 与 PRO 6000D 的 SM120 不能视为相同内核支持。**
-  官方 recipe 未列 PRO 6000D 为已验证设备。
-  [SM120 FP8 社区部署](https://github.com/krzychdre/GLM-5.3-Flash-sm120)
-  使用修补后的镜像，不能据此保证官方镜像在本机开箱即用。`VLLM_IMAGE` 可替换为经验证的同接口 SM120 构建。
-  这里没有自动引入第三方补丁，也没有关闭依赖版本检查。
+- 默认使用 `cstechdev/vllm:glm53-flash-nope-sm120-cu130-20260826-r1`（CUDA 13.0）。
+  [补丁源码与案例](https://github.com/chriswritescode-dev/glm-5.3-flash-sm120)
+  针对原始官方镜像的 `pe_dim must be 64 for fp8_ds_mla` 报错提供 NoPE MLA 适配。
+  用户的 2026-09-14 启动日志已复现该错误，因此不再默认使用原始官方镜像。
+- 该社区构建报告验证了 4×96GB PRO 6000；本配置 TP8/400K/50 尚未实测。
+  补丁也调整稀疏注意力候选选择，需要验证长文检索正确性。
+  保持 FP8 KV，按案例关闭 FlashInfer autotune；MTP 默认关闭。
 - 宿主机需要 Linux、Docker Compose、NVIDIA Container Toolkit，以及兼容镜像 CUDA 的驱动。
 
 ## 配置及启动
@@ -44,6 +44,30 @@ docker compose logs -f vllm
 初次加载及编译可能需要数十分钟，健康检查预留一小时。
 Docker 的 restart 策略会重启退出的进程，但不会仅因 unhealthy 自动重启。
 host 网络直接监听 `.env` 中的端口。编译缓存保存在 named volume 中。
+
+## 已有部署迁移
+
+已有 `.env` 会覆盖 Compose 默认值。不要重新复制 `.env.example` 覆盖模型路径和密钥。
+在服务器的当前目录仅更新以下三项：
+
+```dotenv
+VLLM_IMAGE=cstechdev/vllm:glm53-flash-nope-sm120-cu130-20260826-r1
+MAX_MODEL_LEN=409600
+MAX_NUM_SEQS=50
+```
+
+使用更新后的 `compose.yaml`（新增 `--no-enable-flashinfer-autotune`）执行：
+
+```sh
+docker compose config --quiet
+docker compose config --images
+docker compose pull vllm
+docker compose up -d --force-recreate vllm
+docker compose logs -f vllm
+```
+
+`config --images` 应显示上面的补丁镜像；无需删除模型或缓存卷。
+`up --force-recreate` 会替换当前服务容器。恢复服务后用 `/v1/models` 和实际生成请求验收。
 
 ## 默认参数与调优
 
@@ -94,6 +118,5 @@ docker compose down
 
 ## PRO 6000 系列成功案例调研
 
-见 [调研记录](RESEARCH.md)。当前 Compose 保留官方镜像作为对照基线；
-该历史镜像在 SM120 上已有首轮 forward 失败报告，不能将配置校验通过视为可运行。
-实际部署需要验证官方镜像是否已修复，或使用经过本机验收的 SM120 构建。
+见 [调研记录](RESEARCH.md)。当前使用针对已复现错误的社区补丁构建，
+配置静态校验不代表八卡启动、400K 请求或 50 条并发已通过验收。
