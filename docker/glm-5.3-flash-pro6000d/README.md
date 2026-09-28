@@ -15,7 +15,7 @@
   用户的 2026-09-14 启动日志已复现该错误，因此不再默认使用原始官方镜像。
 - 该社区构建报告验证了 4×96GB PRO 6000；本配置 TP8/400K/50 尚未实测。
   补丁也调整稀疏注意力候选选择，需要验证长文检索正确性。
-  保持 FP8 KV，按案例关闭 FlashInfer autotune；当前试跑开启 prefix caching 和 MTP5。
+  保持 FP8 KV，按案例关闭 FlashInfer autotune；开启 prefix caching，MTP 因 OOM 暂时关闭。
 - 宿主机需要 Linux、Docker Compose、NVIDIA Container Toolkit，以及兼容镜像 CUDA 的驱动。
 
 ## 配置及启动
@@ -79,12 +79,12 @@ docker compose logs -f vllm
 | 权重 / KV | 原生 FP8 / FP8 KV，沿用官方 Blackwell 配置方向 |
 | 并行 | TP8、单进程组，使用 GPU 0–7 |
 | 上下文 | 409600（400 × 1024），为本配置目标；不直接申请原生 1M |
-| 调度 | 最多 50 条序列、每轮 16384 token、chunked prefill |
+| 调度 | 最多 50 条序列、每轮 8192 token、chunked prefill |
 | 显存预算 | 0.90，保留运行余量 |
 | 解析 | `glm47` 工具调用、`glm45` reasoning、自动工具选择 |
 | Frontend | Python |
 | 前缀缓存 | 显式开启 `--enable-prefix-caching` |
-| 推测解码 | MTP5 试跑，50 序列下的性能及正确性需压测 |
+| 推测解码 | 关闭；MTP5 + 16K 批次曾导致 OOM，见下文 |
 
 400K 是单请求输入加输出的上限，50 条调度序列不代表能同时容纳 50 个满长请求。
 这些是期望配置，尚未实测；已有 `.env` 需手动同步 `MAX_MODEL_LEN=409600` 和 `MAX_NUM_SEQS=50`。
@@ -138,3 +138,14 @@ docker compose down
 
 启用新增 watchdog 时执行 `docker compose up -d`，不要仅指定 `vllm` 服务；
 通过 `docker compose logs -f watchdog` 查看自动恢复记录。
+
+## 2026-09-28 OOM 回退
+
+上述 MTP5 + 16384 组合在 8 卡上出现各 rank 显存耗尽（`free: 1835008`）。
+已回退到此前跑通的配置：关闭 MTP、`MAX_NUM_BATCHED_TOKENS=8192`，保留 prefix caching。
+服务器 `.env` 需同步改为 8192 后执行 `docker compose up -d --force-recreate vllm`。
+
+MTP5 在 50 序列下每步解码 300 token，超出该补丁构建按 ≤64 token 特化的范围，
+且草稿层权重、KV 和更大的 CUDA graph 都不在原显存余量内。
+如需再试 MTP，一次只改一个变量：保持 8192，先用 `num_speculative_tokens` 1–2，
+或同时将 `GPU_MEMORY_UTILIZATION` 降到 0.85。

@@ -48,7 +48,7 @@ services:
       - --max-num-seqs
       - ${MAX_NUM_SEQS:-50}
       - --max-num-batched-tokens
-      - ${MAX_NUM_BATCHED_TOKENS:-16384}
+      - ${MAX_NUM_BATCHED_TOKENS:-8192}
       - --gpu-memory-utilization
       - ${GPU_MEMORY_UTILIZATION:-0.90}
       - --enable-prefix-caching
@@ -59,9 +59,9 @@ services:
       - --reasoning-parser
       - glm45
       - --enable-auto-tool-choice
-      # 试跑 MTP5；50 序列下的内核表现和收益需压测。
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":5}'
+      # MTP5 + 50 序列 + 16K 批次在 TP8 上 OOM（2026-09-28）；单独复测前保持关闭。
+      # - --speculative-config
+      # - '{"method":"mtp","num_speculative_tokens":5}'
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -H \"Authorization: Bearer $$VLLM_API_KEY\" http://127.0.0.1:$$SERVER_PORT/health >/dev/null"]
       interval: 30s
