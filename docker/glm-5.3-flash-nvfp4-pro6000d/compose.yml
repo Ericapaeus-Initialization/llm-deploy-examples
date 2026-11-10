@@ -33,19 +33,19 @@ services:
       - --host
       - 0.0.0.0
       - --port
-      - 10669
+      - "10669"
       - --tensor-parallel-size
       - "8"
       - --kv-cache-dtype
       - fp8
       - --max-model-len
-      - 409600
+      - "409600"
       - --max-num-seqs
-      - 50
+      - "50"
       - --max-num-batched-tokens
-      - 8192
+      - "8192"
       - --gpu-memory-utilization
-      - 0.95
+      - "0.95"
       - --tokenizer-mode
       - glm5_next
       - --tool-call-parser
