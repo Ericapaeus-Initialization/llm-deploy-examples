@@ -15,7 +15,7 @@ services:
       VLLM_USE_RUST_FRONTEND: "1"
       HF_HUB_OFFLINE: "1"
     volumes:
-      - /data/models/GLM-5.3-Flash:/model:ro
+      - /data/models/GLM-5.3-Flash-NVFP4:/model:ro
       - compile_cache:/root/.cache
     deploy:
       resources:
