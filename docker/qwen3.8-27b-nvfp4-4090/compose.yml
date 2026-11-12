@@ -1,0 +1,85 @@
+services:
+  vllm:
+    image: vllm/vllm-openai:nightly
+    restart: unless-stopped
+    init: true
+    labels:
+      qwen3.8-27b-nvfp4-autoheal: "true"
+    network_mode: host
+    ipc: host
+    privileged: true
+    environment:
+      VLLM_API_KEY: ${VLLM_API_KEY:?Set VLLM_API_KEY in .env}
+      SERVER_PORT: "10669"
+      VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+      VLLM_USE_RUST_FRONTEND: "1"
+      HF_HUB_OFFLINE: "1"
+    volumes:
+      - /data/models/Qwen3.8-27B-NVFP4:/model:ro
+      - compile_cache:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint: ["vllm"]
+    command:
+      - serve
+      - /model
+      - --served-model-name
+      - Qwen/Qwen3.8-27B
+      - --host
+      - 0.0.0.0
+      - --port
+      - "10669"
+      - --tensor-parallel-size
+      - "8"
+      - --kv-cache-dtype
+      - fp8
+      - --max-model-len
+      - "262144"
+      - --max-num-seqs
+      - "60"
+      - --max-num-batched-tokens
+      - "8192"
+      - --gpu-memory-utilization
+      - "0.92"
+      - --enable-chunked-prefill
+      - --async-scheduling
+      - --enable-prefix-caching
+      - --tool-call-parser
+      - qwen3_coder
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --mm-encoder-tp-mode
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -H \"Authorization: Bearer $$VLLM_API_KEY\" http://127.0.0.1:$$SERVER_PORT/health >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 3600s
+    logging:
+      driver: json-file
+      options:
+        max-size: 100m
+        max-file: "5"
+
+  watchdog:
+    image: willfarrell/autoheal:latest
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: qwen3.8-27b-nvfp4-autoheal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  compile_cache:
