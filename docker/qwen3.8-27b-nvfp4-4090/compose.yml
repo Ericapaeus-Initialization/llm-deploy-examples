@@ -39,7 +39,7 @@ services:
       - --kv-cache-dtype
       - fp8
       - --max-model-len
-      - "262144"
+      - "1000000"
       - --max-num-seqs
       - "60"
       - --max-num-batched-tokens
