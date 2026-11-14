@@ -56,6 +56,10 @@ services:
       - --enable-auto-tool-choice
       - --mm-encoder-tp-mode
       - data
+      - --load-format
+      - fastsafetensors
+      - --hf-overrides 
+      - '{"text_config": {"rope_parameters": {"mrope_interleaved": true, "mrope_section": [11, 11, 10], "rope_type": "yarn", "rope_theta": 10000000, "partial_rotary_factor": 0.25, "factor": 4.0, "original_max_position_embeddings": 262144}}}'
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -H \"Authorization: Bearer $$VLLM_API_KEY\" http://127.0.0.1:$$SERVER_PORT/health >/dev/null"]
       interval: 30s
